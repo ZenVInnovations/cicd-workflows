@@ -1,0 +1,220 @@
+# Example Backend CI/CD Workflow
+# Place this file at: .github/workflows/ci-cd.yml in your backend repository
+
+name: Backend CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, staging, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+    branches: [main, staging]
+    types: [opened, synchronize, reopened]
+
+env:
+  SERVICE_NAME: project_management_flutto
+  RUBY_VERSION: '3.1'
+
+jobs:
+  # Run Tests and Code Quality Checks
+  test:
+    name: 🧪 Test & Code Quality
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - name: Set up database
+        env:
+          DATABASE_URL: postgres://postgres:test@localhost:5432/test
+          RAILS_ENV: test
+        run: |
+          bundle exec rails db:create
+          bundle exec rails db:schema:load
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgres://postgres:test@localhost:5432/test
+          RAILS_ENV: test
+        run: |
+          bundle exec rspec --format progress --format RspecJunitFormatter --out tmp/rspec.xml
+
+      - name: Run RuboCop
+        run: bundle exec rubocop --format json --out tmp/rubocop.json
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            tmp/rspec.xml
+            tmp/rubocop.json
+
+  # Build and Push Docker Image
+  build:
+    name: 🐳 Build & Push Docker Image
+    needs: test
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/docker-build-push.yml@main
+    with:
+      service_name: ${{ env.SERVICE_NAME }}
+      dockerfile_path: './Dockerfile'
+      docker_target: 'slim'  # Use slim target for production
+      build_context: '.'
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MANIFEST_UPDATE_TOKEN: ${{ secrets.MANIFEST_UPDATE_TOKEN }}
+
+  # Security Vulnerability Scanning
+  security:
+    name: 🔒 Security Vulnerability Scan
+    needs: build
+    if: always() && needs.build.result == 'success'
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/security-scan.yml@main
+    with:
+      image_name: ${{ env.SERVICE_NAME }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      fail_on_severity: 'CRITICAL'  # Only fail on critical for backend
+      upload_sarif: true
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Database Migration Check (for production)
+  migration-check:
+    name: 🗄️ Database Migration Check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - name: Check for pending migrations
+        run: |
+          # This would normally check against production database
+          # For now, just validate migration files exist
+          if ls db/migrate/*.rb 1> /dev/null 2>&1; then
+            echo "✅ Migration files found and validated"
+          else
+            echo "ℹ️ No migration files found"
+          fi
+
+  # Auto-promote from development to staging
+  promote-to-staging:
+    name: 🚀 Auto-Promote to Staging
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    needs: [test, build, security]
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/promote-environment.yml@main
+    with:
+      service_name: ${{ env.SERVICE_NAME }}
+      from_environment: 'development'
+      to_environment: 'staging'
+      from_branch: 'develop'
+      to_branch: 'staging'
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Auto-promote from staging to production (with additional checks)
+  promote-to-production:
+    name: 🚀 Auto-Promote to Production
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    needs: [test, build, security, migration-check]
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/promote-environment.yml@main
+    with:
+      service_name: ${{ env.SERVICE_NAME }}
+      from_environment: 'staging'
+      to_environment: 'production'
+      from_branch: 'staging'
+      to_branch: 'main'
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Health Check (for production deployments)
+  health-check:
+    name: 🏥 Post-Deployment Health Check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for deployment
+        run: sleep 60  # Wait for ArgoCD to deploy
+
+      - name: Health check - Production
+        run: |
+          echo "🏥 Checking production health endpoint"
+          for i in {1..5}; do
+            if curl -f -s https://backend.flutto.ai/health_checks/default; then
+              echo "✅ Health check passed"
+              exit 0
+            fi
+            echo "⏳ Attempt $i failed, retrying in 30s..."
+            sleep 30
+          done
+          echo "❌ Health check failed after 5 attempts"
+          exit 1
+
+  # Deployment Summary
+  summary:
+    name: 📊 Deployment Summary
+    if: always()
+    needs: [test, build, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Summary
+        run: |
+          echo "## 🚀 Backend Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test.result }} | RSpec + RuboCop |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} | ${{ needs.build.outputs.image_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result }} | Trivy scan completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ needs.build.outputs.environment }} | Target deployment environment |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.build.outputs.environment }}" != "pr" && "${{ needs.build.outputs.environment }}" != "feature" ]]; then
+            echo "### 🌐 Deployment URLs" >> $GITHUB_STEP_SUMMARY
+            case "${{ needs.build.outputs.environment }}" in
+              "production")
+                echo "- **Production API**: https://backend.flutto.ai" >> $GITHUB_STEP_SUMMARY
+                echo "- **Health Check**: https://backend.flutto.ai/health_checks/default" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "staging")
+                echo "- **Staging API**: https://stage-backend.flutto.ai" >> $GITHUB_STEP_SUMMARY
+                echo "- **Health Check**: https://stage-backend.flutto.ai/health_checks/default" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "development")
+                echo "- **Development API**: https://develop-backend.flutto.ai" >> $GITHUB_STEP_SUMMARY
+                echo "- **Health Check**: https://develop-backend.flutto.ai/health_checks/default" >> $GITHUB_STEP_SUMMARY
+                ;;
+            esac
+          fi

@@ -1,0 +1,103 @@
+# Example Frontend CI/CD Workflow
+# Place this file at: .github/workflows/ci-cd.yml in your frontend repository
+
+name: Frontend CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, staging, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+    branches: [main, staging]
+    types: [opened, synchronize, reopened]
+
+env:
+  SERVICE_NAME: flutto-frontend
+
+jobs:
+  # Build and Push Docker Image
+  build:
+    name: 🐳 Build & Push Docker Image
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/docker-build-push.yml@main
+    with:
+      service_name: ${{ env.SERVICE_NAME }}
+      dockerfile_path: './Dockerfile'
+      build_context: '.'
+      build_script: './scripts/build-frontend.sh'  # Optional: custom build script
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MANIFEST_UPDATE_TOKEN: ${{ secrets.MANIFEST_UPDATE_TOKEN }}
+
+  # Security Vulnerability Scanning
+  security:
+    name: 🔒 Security Vulnerability Scan
+    needs: build
+    if: always() && needs.build.result == 'success'
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/security-scan.yml@main
+    with:
+      image_name: ${{ env.SERVICE_NAME }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      fail_on_severity: 'HIGH,CRITICAL'
+      upload_sarif: true
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Auto-promote from development to staging
+  promote-to-staging:
+    name: 🚀 Auto-Promote to Staging
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    needs: [build, security]
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/promote-environment.yml@main
+    with:
+      service_name: ${{ env.SERVICE_NAME }}
+      from_environment: 'development'
+      to_environment: 'staging'
+      from_branch: 'develop'
+      to_branch: 'staging'
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Auto-promote from staging to production
+  promote-to-production:
+    name: 🚀 Auto-Promote to Production
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    needs: [build, security]
+    uses: zenvinnovations/flutto-cicd-workflows/.github/workflows/promote-environment.yml@main
+    with:
+      service_name: ${{ env.SERVICE_NAME }}
+      from_environment: 'staging'
+      to_environment: 'production'
+      from_branch: 'staging'
+      to_branch: 'main'
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Deployment Summary
+  summary:
+    name: 📊 Deployment Summary
+    if: always()
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Summary
+        run: |
+          echo "## 🚀 Frontend Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} | ${{ needs.build.outputs.image_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result }} | Trivy scan completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ needs.build.outputs.environment }} | Target deployment environment |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.build.outputs.environment }}" != "pr" && "${{ needs.build.outputs.environment }}" != "feature" ]]; then
+            echo "### 🌐 Deployment URL" >> $GITHUB_STEP_SUMMARY
+            case "${{ needs.build.outputs.environment }}" in
+              "production") echo "- **Production**: https://zenv.flutto.ai" >> $GITHUB_STEP_SUMMARY ;;
+              "staging") echo "- **Staging**: https://staging.flutto.ai" >> $GITHUB_STEP_SUMMARY ;;
+              "development") echo "- **Development**: https://dev.flutto.ai" >> $GITHUB_STEP_SUMMARY ;;
+            esac
+          fi
