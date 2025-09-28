@@ -109,7 +109,7 @@ jobs:
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install pnpm (for frontend builds)
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
