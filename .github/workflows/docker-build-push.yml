@@ -118,6 +118,17 @@ jobs:
           npm install -g pnpm@latest
           pnpm --version
 
+      - name: Debug - List repository contents
+        if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
+        run: |
+          echo "🔍 Current working directory: $(pwd)"
+          echo "📁 Repository root contents:"
+          ls -la
+          echo "📁 Scripts directory contents:"
+          ls -la scripts/ || echo "❌ scripts/ directory not found"
+          echo "🎯 Looking for build script: ${{ inputs.build_script }}"
+          [ -f "${{ inputs.build_script }}" ] && echo "✅ Build script exists" || echo "❌ Build script NOT found"
+
       - name: Frontend Build (if using build script)
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
         run: |
