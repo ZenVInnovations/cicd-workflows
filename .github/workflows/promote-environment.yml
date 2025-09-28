@@ -23,9 +23,7 @@ on:
         description: 'Target branch'
         required: true
         type: string
-    secrets:
-      GITHUB_TOKEN:
-        required: true
+    # Note: GITHUB_TOKEN is automatically available
 
 jobs:
   create-promotion-pr:

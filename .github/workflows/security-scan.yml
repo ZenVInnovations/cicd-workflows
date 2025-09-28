@@ -21,9 +21,7 @@ on:
         required: false
         type: boolean
         default: true
-    secrets:
-      GITHUB_TOKEN:
-        required: true
+    # Note: GITHUB_TOKEN is automatically available, no need to declare as secret
 
 jobs:
   security-scan:
