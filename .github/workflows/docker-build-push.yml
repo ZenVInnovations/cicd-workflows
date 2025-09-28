@@ -122,6 +122,18 @@ jobs:
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
         run: |
           echo "🔧 Running frontend build script: ${{ inputs.build_script }}"
+
+          # Check if script exists
+          if [ ! -f "${{ inputs.build_script }}" ]; then
+            echo "❌ Build script not found: ${{ inputs.build_script }}"
+            echo "📁 Available files in scripts directory:"
+            ls -la scripts/ || echo "scripts/ directory not found"
+            echo "📁 Available files in current directory:"
+            ls -la .
+            exit 1
+          fi
+
+          # Make script executable and run
           chmod +x ${{ inputs.build_script }}
           ${{ inputs.build_script }}
 
