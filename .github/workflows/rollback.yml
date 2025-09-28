@@ -1,0 +1,356 @@
+name: Emergency Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_name:
+        description: 'Service to rollback'
+        required: true
+        type: choice
+        options:
+        - flutto-frontend
+        - project_management_flutto
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+        - development
+        - staging
+        - production
+      target_version:
+        description: 'Version to rollback to (leave empty for previous version)'
+        required: false
+        type: string
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+
+  issue_comment:
+    types: [created]
+
+jobs:
+  # Parse rollback command from comments
+  parse-rollback-command:
+    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/rollback')
+    runs-on: ubuntu-latest
+    outputs:
+      should_rollback: ${{ steps.parse.outputs.should_rollback }}
+      service_name: ${{ steps.parse.outputs.service_name }}
+      environment: ${{ steps.parse.outputs.environment }}
+      target_version: ${{ steps.parse.outputs.target_version }}
+      reason: ${{ steps.parse.outputs.reason }}
+
+    steps:
+      - name: Parse rollback command
+        id: parse
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          echo "Parsing comment: $COMMENT"
+
+          # Look for pattern: /rollback <service> <environment> [version]
+          if [[ "$COMMENT" =~ /rollback[[:space:]]+([a-zA-Z0-9_-]+)[[:space:]]+([a-zA-Z0-9_-]+)([[:space:]]+([a-zA-Z0-9._-]+))? ]]; then
+            SERVICE="${BASH_REMATCH[1]}"
+            ENVIRONMENT="${BASH_REMATCH[2]}"
+            VERSION="${BASH_REMATCH[4]:-}"
+
+            echo "Parsed rollback command:"
+            echo "  Service: $SERVICE"
+            echo "  Environment: $ENVIRONMENT"
+            echo "  Version: $VERSION"
+
+            # Validate service name
+            case "$SERVICE" in
+              "flutto-frontend"|"project_management_flutto"|"frontend"|"backend")
+                # Normalize service names
+                if [[ "$SERVICE" == "frontend" ]]; then
+                  SERVICE="flutto-frontend"
+                elif [[ "$SERVICE" == "backend" ]]; then
+                  SERVICE="project_management_flutto"
+                fi
+
+                echo "should_rollback=true" >> $GITHUB_OUTPUT
+                echo "service_name=$SERVICE" >> $GITHUB_OUTPUT
+                echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+                echo "target_version=$VERSION" >> $GITHUB_OUTPUT
+                echo "reason=Emergency rollback via comment by @${{ github.actor }}" >> $GITHUB_OUTPUT
+                ;;
+              *)
+                echo "Invalid service name: $SERVICE"
+                echo "should_rollback=false" >> $GITHUB_OUTPUT
+                ;;
+            esac
+          else
+            echo "Invalid rollback command format"
+            echo "Usage: /rollback <service> <environment> [version]"
+            echo "should_rollback=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Execute the rollback
+  execute-rollback:
+    needs: [parse-rollback-command]
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.parse-rollback-command.outputs.should_rollback == 'true')
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.environment || needs.parse-rollback-command.outputs.environment }}
+
+    steps:
+      - name: Checkout deployment manifests
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set rollback parameters
+        id: params
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "service_name=${{ github.event.inputs.service_name }}" >> $GITHUB_OUTPUT
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "target_version=${{ github.event.inputs.target_version }}" >> $GITHUB_OUTPUT
+            echo "reason=${{ github.event.inputs.reason }}" >> $GITHUB_OUTPUT
+          else
+            echo "service_name=${{ needs.parse-rollback-command.outputs.service_name }}" >> $GITHUB_OUTPUT
+            echo "environment=${{ needs.parse-rollback-command.outputs.environment }}" >> $GITHUB_OUTPUT
+            echo "target_version=${{ needs.parse-rollback-command.outputs.target_version }}" >> $GITHUB_OUTPUT
+            echo "reason=${{ needs.parse-rollback-command.outputs.reason }}" >> $GITHUB_OUTPUT
+          fi
+
+          echo "🔄 Rollback Parameters:"
+          echo "  Service: ${{ github.event.inputs.service_name || needs.parse-rollback-command.outputs.service_name }}"
+          echo "  Environment: ${{ github.event.inputs.environment || needs.parse-rollback-command.outputs.environment }}"
+          echo "  Target Version: ${{ github.event.inputs.target_version || needs.parse-rollback-command.outputs.target_version }}"
+          echo "  Reason: ${{ github.event.inputs.reason || needs.parse-rollback-command.outputs.reason }}"
+
+      - name: Determine manifest file
+        id: manifest
+        run: |
+          SERVICE="${{ steps.params.outputs.service_name }}"
+          ENVIRONMENT="${{ steps.params.outputs.environment }}"
+
+          case "$SERVICE" in
+            "flutto-frontend")
+              MANIFEST_FILE="argocd/flutto-frontend-${ENVIRONMENT}.yaml"
+              ;;
+            "project_management_flutto")
+              MANIFEST_FILE="argocd/openproject-flutto-${ENVIRONMENT}.yaml"
+              ;;
+          esac
+
+          echo "manifest_file=$MANIFEST_FILE" >> $GITHUB_OUTPUT
+          echo "Manifest file: $MANIFEST_FILE"
+
+          # Verify manifest exists
+          if [[ ! -f "$MANIFEST_FILE" ]]; then
+            echo "❌ Manifest file not found: $MANIFEST_FILE"
+            echo "Available manifests:"
+            find argocd/ -name "*.yaml" -type f
+            exit 1
+          fi
+
+      - name: Get rollback version
+        id: version
+        run: |
+          MANIFEST_FILE="${{ steps.manifest.outputs.manifest_file }}"
+          TARGET_VERSION="${{ steps.params.outputs.target_version }}"
+
+          if [[ -n "$TARGET_VERSION" ]]; then
+            echo "Using specified target version: $TARGET_VERSION"
+            echo "target_version=$TARGET_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "No version specified, finding previous version..."
+
+            # Get current version
+            CURRENT_VERSION=$(grep -o 'tag: "[^"]*"' "$MANIFEST_FILE" | cut -d'"' -f2)
+            echo "Current version: $CURRENT_VERSION"
+
+            # Try to find previous version from git history
+            PREVIOUS_COMMIT=$(git log --format="%H" -n 2 --follow "$MANIFEST_FILE" | tail -1)
+
+            if [[ -n "$PREVIOUS_COMMIT" ]]; then
+              PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:"$MANIFEST_FILE" 2>/dev/null | grep -o 'tag: "[^"]*"' | cut -d'"' -f2)
+              if [[ -n "$PREVIOUS_VERSION" && "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]]; then
+                echo "Found previous version: $PREVIOUS_VERSION"
+                echo "target_version=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+              else
+                echo "❌ Could not find valid previous version"
+                echo "Please specify a target version manually"
+                exit 1
+              fi
+            else
+              echo "❌ Could not find git history for manifest"
+              exit 1
+            fi
+          fi
+
+      - name: Verify target image exists in GHCR
+        run: |
+          TARGET_VERSION="${{ steps.version.outputs.target_version }}"
+          SERVICE_NAME="${{ steps.params.outputs.service_name }}"
+
+          echo "🔍 Verifying image exists in GHCR"
+          IMAGE="ghcr.io/zenvinnovations/${SERVICE_NAME}:${TARGET_VERSION}"
+          echo "Checking: $IMAGE"
+
+          # Login to GHCR
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          # Try to pull the image
+          if docker pull "$IMAGE" >/dev/null 2>&1; then
+            echo "✅ Image exists and is accessible"
+          else
+            echo "❌ Image does not exist or is not accessible: $IMAGE"
+            echo ""
+            echo "Available images for $SERVICE_NAME:"
+            curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                 -H "Accept: application/vnd.github.v3+json" \
+                 "https://api.github.com/user/packages/container/${SERVICE_NAME}/versions" \
+                 2>/dev/null | jq -r '.[].metadata.container.tags[]' | head -10 || echo "Could not list available tags"
+            exit 1
+          fi
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "Flutto Rollback Bot"
+          git config --global user.email "rollback-bot@flutto.ai"
+
+      - name: Perform rollback
+        run: |
+          MANIFEST_FILE="${{ steps.manifest.outputs.manifest_file }}"
+          TARGET_VERSION="${{ steps.version.outputs.target_version }}"
+
+          echo "🔄 Performing rollback"
+          echo "Manifest: $MANIFEST_FILE"
+          echo "Target Version: $TARGET_VERSION"
+
+          # Backup current manifest
+          cp "$MANIFEST_FILE" "${MANIFEST_FILE}.backup.$(date +%s)"
+
+          # Update the manifest with the rollback version
+          sed -i "s/tag: \"[^\"]*\"/tag: \"${TARGET_VERSION}\"/" "$MANIFEST_FILE"
+
+          # Verify the change
+          if grep -q "tag: \"${TARGET_VERSION}\"" "$MANIFEST_FILE"; then
+            echo "✅ Successfully updated manifest with rollback version"
+          else
+            echo "❌ Failed to update manifest"
+            exit 1
+          fi
+
+      - name: Commit and push rollback
+        run: |
+          MANIFEST_FILE="${{ steps.manifest.outputs.manifest_file }}"
+
+          # Stage the changes
+          git add "$MANIFEST_FILE"
+
+          # Create detailed commit message
+          git commit -m "🔄 EMERGENCY ROLLBACK: ${{ steps.params.outputs.service_name }} in ${{ steps.params.outputs.environment }}
+
+          Rollback Details:
+          - Service: ${{ steps.params.outputs.service_name }}
+          - Environment: ${{ steps.params.outputs.environment }}
+          - Target Version: ${{ steps.version.outputs.target_version }}
+          - Reason: ${{ steps.params.outputs.reason }}
+          - Triggered by: ${{ github.actor }}
+          - Timestamp: $(date -u)
+          - Workflow Run: ${{ github.run_id }}
+
+          This is an automated emergency rollback performed by the Flutto CI/CD system."
+
+          # Push the changes
+          git push origin main
+
+          echo "✅ Rollback committed and pushed successfully"
+
+      - name: Verify rollback in ArgoCD (if possible)
+        continue-on-error: true
+        run: |
+          echo "🔍 ArgoCD will detect the manifest change and sync automatically"
+          echo "Expected sync time: 1-3 minutes"
+          echo ""
+          echo "Manual verification steps:"
+          echo "1. Check ArgoCD UI for sync status"
+          echo "2. Monitor application pods: kubectl get pods -n <namespace>"
+          echo "3. Verify application health endpoints"
+
+      - name: Post rollback status comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `## 🔄 Emergency Rollback Completed ✅
+
+            **Service**: ${{ steps.params.outputs.service_name }}
+            **Environment**: ${{ steps.params.outputs.environment }}
+            **Rolled back to**: \`${{ steps.version.outputs.target_version }}\`
+            **Reason**: ${{ steps.params.outputs.reason }}
+            **Executed by**: @${{ github.actor }}
+            **Timestamp**: ${new Date().toISOString()}
+
+            ### 📋 Post-Rollback Checklist
+
+            - [ ] Verify ArgoCD sync completed (1-3 minutes)
+            - [ ] Check application pods are running
+            - [ ] Test application health endpoints
+            - [ ] Monitor for any errors in logs
+            - [ ] Verify user-facing functionality
+
+            ### 🌐 Verification URLs
+
+            ${{ steps.params.outputs.service_name == 'flutto-frontend' &&
+                (steps.params.outputs.environment == 'production' && '- **Frontend**: https://zenv.flutto.ai' ||
+                 steps.params.outputs.environment == 'staging' && '- **Frontend**: https://staging.flutto.ai' ||
+                 steps.params.outputs.environment == 'development' && '- **Frontend**: https://dev.flutto.ai') ||
+              steps.params.outputs.service_name == 'project_management_flutto' &&
+                (steps.params.outputs.environment == 'production' && '- **Backend**: https://backend.flutto.ai\n- **Health**: https://backend.flutto.ai/health_checks/default' ||
+                 steps.params.outputs.environment == 'staging' && '- **Backend**: https://stage-backend.flutto.ai\n- **Health**: https://stage-backend.flutto.ai/health_checks/default' ||
+                 steps.params.outputs.environment == 'development' && '- **Backend**: https://develop-backend.flutto.ai\n- **Health**: https://develop-backend.flutto.ai/health_checks/default')
+            }}
+
+            ---
+            🤖 *Automated rollback completed by Flutto CI/CD System*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+
+      - name: Create rollback summary
+        run: |
+          echo "## 🔄 Emergency Rollback Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | ${{ steps.params.outputs.service_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ steps.params.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target Version | ${{ steps.version.outputs.target_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Reason | ${{ steps.params.outputs.reason }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | $(date -u) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Rollback Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The rollback has been **successfully completed**. ArgoCD will automatically detect the change and sync the deployment within 1-3 minutes." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Monitor ArgoCD**: Check sync status in ArgoCD dashboard" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Verify Deployment**: Confirm pods are running and healthy" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Test Application**: Verify functionality at service endpoints" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Investigate Root Cause**: Analyze what caused the need for rollback" >> $GITHUB_STEP_SUMMARY
+
+      - name: Final success message
+        run: |
+          echo "✅ Emergency rollback completed successfully!"
+          echo ""
+          echo "📊 Summary:"
+          echo "  Service: ${{ steps.params.outputs.service_name }}"
+          echo "  Environment: ${{ steps.params.outputs.environment }}"
+          echo "  Rolled back to: ${{ steps.version.outputs.target_version }}"
+          echo "  Reason: ${{ steps.params.outputs.reason }}"
+          echo ""
+          echo "🔄 ArgoCD will automatically sync the rollback within 1-3 minutes."
+          echo "Monitor the deployment and verify application health."
