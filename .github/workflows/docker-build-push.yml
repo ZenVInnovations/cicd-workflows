@@ -41,7 +41,7 @@ on:
 
 jobs:
   build-push:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, zenvinnovations]
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
       environment: ${{ steps.tag.outputs.environment }}
