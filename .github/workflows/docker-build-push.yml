@@ -105,6 +105,19 @@ jobs:
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
           echo "env_tag=$ENV_TAG" >> $GITHUB_OUTPUT
 
+      - name: Setup Node.js and pnpm (for frontend builds)
+        if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install pnpm (for frontend builds)
+        if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
+        run: |
+          echo "📦 Installing pnpm..."
+          npm install -g pnpm@latest
+          pnpm --version
+
       - name: Frontend Build (if using build script)
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
         run: |
