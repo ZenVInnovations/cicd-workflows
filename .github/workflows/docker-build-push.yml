@@ -209,69 +209,100 @@ jobs:
           echo "📝 Updating deployment manifests"
 
           # Clone manifests repository
-          git clone https://${{ secrets.MANIFEST_UPDATE_TOKEN }}@github.com/zenvinnovations/flutto-deploy-manifests.git manifests
+          git clone https://${{ secrets.MANIFEST_UPDATE_TOKEN }}@github.com/zenvinnovations/flutto-deployment-manifests.git manifests
           cd manifests
 
           # Configure git
           git config --global user.name "Flutto CI/CD Bot"
           git config --global user.email "cicd@flutto.ai"
 
-          # Determine manifest file
+          # Determine values file and service key
           ENVIRONMENT="${{ steps.tag.outputs.environment }}"
           SERVICE="${{ inputs.service_name }}"
 
-          case "$SERVICE" in
-            "flutto-frontend")
-              MANIFEST_FILE="argocd/flutto-frontend-${ENVIRONMENT}.yaml"
+          # Map environment names to match values files
+          case "$ENVIRONMENT" in
+            "development")
+              ENV_FILE="dev"
               ;;
-            "project_management_flutto")
-              MANIFEST_FILE="argocd/openproject-flutto-${ENVIRONMENT}.yaml"
+            "staging")
+              ENV_FILE="staging"
+              ;;
+            "production")
+              ENV_FILE="production"
+              ;;
+            *)
+              echo "⚠️ Unsupported environment: $ENVIRONMENT"
+              exit 1
               ;;
           esac
 
-          echo "Updating manifest: $MANIFEST_FILE"
+          # Determine service configuration path in Helm values
+          case "$SERVICE" in
+            "flutto-frontend")
+              VALUES_FILE="platform/helm/flutto-platform/values/${ENV_FILE}.yaml"
+              SERVICE_KEY="frontend"
+              ;;
+            "project_management_flutto")
+              VALUES_FILE="platform/helm/flutto-platform/values/${ENV_FILE}.yaml"
+              SERVICE_KEY="openproject"
+              ;;
+            *)
+              echo "⚠️ Unsupported service: $SERVICE"
+              exit 1
+              ;;
+          esac
 
-          # Check if manifest exists
-          if [[ ! -f "$MANIFEST_FILE" ]]; then
-            echo "⚠️ Manifest not found: $MANIFEST_FILE"
-            echo "Available manifests:"
-            find argocd/ -name "*.yaml" -type f | head -10
+          echo "Updating values file: $VALUES_FILE"
+          echo "Service key: $SERVICE_KEY"
+          echo "New tag: ${{ steps.tag.outputs.tag }}"
+
+          # Check if values file exists
+          if [[ ! -f "$VALUES_FILE" ]]; then
+            echo "⚠️ Values file not found: $VALUES_FILE"
+            echo "Available values files:"
+            find platform/helm/flutto-platform/values/ -name "*.yaml" -type f | head -10
             exit 1
           fi
 
-          # Update image tag in manifest
-          # Use both sed and yq approach for reliability
-          if command -v yq >/dev/null 2>&1; then
-            echo "Using yq to update manifest"
-            yq eval -i '.spec.source.helm.values = (.spec.source.helm.values | sub("tag: \".*\""; "tag: \"${{ steps.tag.outputs.tag }}\""))' "$MANIFEST_FILE"
-          else
-            echo "Using sed to update manifest"
-            sed -i 's/tag: "[^"]*"/tag: "${{ steps.tag.outputs.tag }}"/' "$MANIFEST_FILE"
+          # Install yq if not available
+          if ! command -v yq >/dev/null 2>&1; then
+            echo "📦 Installing yq..."
+            wget -qO /tmp/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            chmod +x /tmp/yq
+            sudo mv /tmp/yq /usr/local/bin/yq
           fi
+
+          # Update image tag in values file
+          echo "Using yq to update Helm values"
+          yq eval -i ".${SERVICE_KEY}.image.tag = \"${{ steps.tag.outputs.tag }}\"" "$VALUES_FILE"
 
           # Verify update
-          if grep -q "${{ steps.tag.outputs.tag }}" "$MANIFEST_FILE"; then
-            echo "✅ Successfully updated tag in manifest"
+          UPDATED_TAG=$(yq eval ".${SERVICE_KEY}.image.tag" "$VALUES_FILE")
+          if [[ "$UPDATED_TAG" == "${{ steps.tag.outputs.tag }}" ]]; then
+            echo "✅ Successfully updated tag in values file"
+            echo "New tag value: $UPDATED_TAG"
           else
-            echo "❌ Failed to update tag - trying alternative approach"
-            # Alternative sed approach
-            sed -i "s/tag: .*/tag: \"${{ steps.tag.outputs.tag }}\"/" "$MANIFEST_FILE"
-
-            if grep -q "${{ steps.tag.outputs.tag }}" "$MANIFEST_FILE"; then
-              echo "✅ Successfully updated with alternative approach"
-            else
-              echo "❌ All update attempts failed"
-              exit 1
-            fi
+            echo "❌ Failed to update tag in values file"
+            echo "Expected: ${{ steps.tag.outputs.tag }}"
+            echo "Found: $UPDATED_TAG"
+            exit 1
           fi
 
+          # Show the changes
+          echo "📋 Changes made to $VALUES_FILE:"
+          git diff "$VALUES_FILE" || true
+
           # Commit and push
-          git add "$MANIFEST_FILE"
+          git add "$VALUES_FILE"
           git commit -m "🚀 Deploy ${{ inputs.service_name }} ${{ steps.tag.outputs.tag }} to ${{ steps.tag.outputs.environment }}
 
           Deployment Details:
           - Service: ${{ inputs.service_name }}
           - Environment: ${{ steps.tag.outputs.environment }}
+          - Values File: $VALUES_FILE
+          - Service Key: $SERVICE_KEY
+          - Image Tag: ${{ steps.tag.outputs.tag }}
           - Image: ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.tag }}
           - Branch: ${GITHUB_REF#refs/heads/}
           - Commit: ${{ github.sha }}
@@ -279,7 +310,7 @@ jobs:
           - Workflow Run: ${{ github.run_id }}"
 
           git push origin main
-          echo "✅ Manifest updated and pushed successfully"
+          echo "✅ Helm values updated and pushed successfully"
 
       - name: Create Deployment Summary
         run: |

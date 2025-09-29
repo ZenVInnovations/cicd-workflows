@@ -291,17 +291,21 @@ echo ""
 # Deployment status check
 echo -e "${YELLOW}📊 Checking deployment configuration...${NC}"
 echo "Deployment manifests should be in: $MANIFEST_REPO"
-echo "Expected manifest files:"
+echo "Expected deployment configuration:"
 case $SERVICE_TYPE in
     "frontend")
-        echo "  - argocd/flutto-frontend-development.yaml"
-        echo "  - argocd/flutto-frontend-staging.yaml"
-        echo "  - argocd/flutto-frontend-production.yaml"
+        echo "  - ApplicationSet: argocd/applicationsets/platform-appset.yaml"
+        echo "  - Helm Values: platform/helm/flutto-platform/values/dev.yaml"
+        echo "  - Helm Values: platform/helm/flutto-platform/values/staging.yaml"
+        echo "  - Helm Values: platform/helm/flutto-platform/values/production.yaml"
+        echo "  - Service Config: frontend.image.tag in values files"
         ;;
     "backend")
-        echo "  - argocd/openproject-flutto-development.yaml"
-        echo "  - argocd/openproject-flutto-staging.yaml"
-        echo "  - argocd/openproject-flutto-production.yaml"
+        echo "  - ApplicationSet: argocd/applicationsets/platform-appset.yaml"
+        echo "  - Helm Values: platform/helm/flutto-platform/values/dev.yaml"
+        echo "  - Helm Values: platform/helm/flutto-platform/values/staging.yaml"
+        echo "  - Helm Values: platform/helm/flutto-platform/values/production.yaml"
+        echo "  - Service Config: openproject.image.tag in values files"
         ;;
 esac
 
