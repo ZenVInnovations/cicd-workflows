@@ -49,7 +49,23 @@ jobs:
           echo "📥 Pulling image for security scan"
           IMAGE="ghcr.io/zenvinnovations/${{ inputs.image_name }}:${{ inputs.image_tag }}"
           echo "Image: $IMAGE"
-          docker pull "$IMAGE"
+
+          # Add retry logic in case of timing issues
+          for i in {1..3}; do
+            if docker pull "$IMAGE"; then
+              echo "✅ Successfully pulled image on attempt $i"
+              break
+            else
+              echo "⚠️ Pull attempt $i failed, retrying in 10 seconds..."
+              if [ $i -eq 3 ]; then
+                echo "❌ All pull attempts failed"
+                echo "🔍 Checking if image exists..."
+                docker manifest inspect "$IMAGE" || echo "Image manifest not found"
+                exit 1
+              fi
+              sleep 10
+            fi
+          done
 
       - name: Run Trivy Vulnerability Scanner (SARIF)
         uses: aquasecurity/trivy-action@master
