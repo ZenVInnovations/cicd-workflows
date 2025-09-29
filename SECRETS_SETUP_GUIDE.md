@@ -17,7 +17,7 @@ The centralized workflows (`security-scan.yml` and `docker-build-push.yml`) were
 
 ### 1. Fixed Workflow Declarations
 
-**Added GITHUB_TOKEN to reusable workflows:**
+**Added GHCR_PAT to reusable workflows:**
 - `.github/workflows/security-scan.yml`
 - `.github/workflows/docker-build-push.yml`
 
@@ -27,7 +27,7 @@ on:
   workflow_call:
     inputs:
       # ... inputs ...
-    # Missing GITHUB_TOKEN declaration
+    # Missing authentication token declaration
 ```
 
 **To:**
@@ -37,7 +37,7 @@ on:
     inputs:
       # ... inputs ...
     secrets:
-      GITHUB_TOKEN:
+      GHCR_PAT:
         required: true
       MANIFEST_UPDATE_TOKEN:
         required: true
@@ -63,13 +63,19 @@ Set these up in **GitHub Repository Settings → Secrets and Variables → Actio
    - ✅ `workflow` (Update GitHub Action workflows)
 4. Copy the token and add to repository secrets as `MANIFEST_UPDATE_TOKEN`
 
-### 2. GITHUB_TOKEN (Automatic)
+### 2. GHCR_PAT (Required)
 
-**Purpose:** Authenticates Docker pulls from GHCR and general GitHub API access
+**Purpose:** Authenticates Docker pulls and pushes to GitHub Container Registry (GHCR)
 
-**Note:** This is automatically provided by GitHub Actions, but:
-- For self-hosted runners, ensure the runner registration PAT has `read:packages` scope
-- The workflow now properly declares it as required for reusable workflows
+**How to create:**
+1. Go to GitHub → Settings → Developer settings → Personal access tokens
+2. Generate new token (classic)
+3. Required scopes:
+   - ✅ `read:packages` (Pull Docker images from GHCR)
+   - ✅ `write:packages` (Push Docker images to GHCR)
+4. Copy the token and add to repository secrets as `GHCR_PAT`
+
+**Note:** This provides dedicated authentication for container registry operations, separate from general GitHub API access.
 
 ## Self-Hosted Runner Requirements
 
