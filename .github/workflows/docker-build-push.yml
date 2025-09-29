@@ -35,9 +35,10 @@ on:
         description: 'Target environment'
         value: ${{ jobs.build-push.outputs.environment }}
     secrets:
+      GITHUB_TOKEN:
+        required: true
       MANIFEST_UPDATE_TOKEN:
         required: true
-    # Note: GITHUB_TOKEN is automatically available
 
 jobs:
   build-push:
