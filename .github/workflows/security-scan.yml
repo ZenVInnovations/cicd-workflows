@@ -226,6 +226,13 @@ jobs:
         run: |
           echo "🚪 Checking security gate"
 
+          # Skip security gate if fail_on_severity is empty
+          if [[ -z "${{ inputs.fail_on_severity }}" ]]; then
+            echo "✅ Security gate disabled - vulnerabilities reported but not blocking"
+            echo "📊 Scan results available for review in the logs above"
+            exit 0
+          fi
+
           if [[ "${{ steps.trivy_check.outcome }}" == "failure" ]]; then
             echo "❌ Security gate failed: Critical or High severity vulnerabilities found"
             echo "This deployment will be blocked until vulnerabilities are resolved."
