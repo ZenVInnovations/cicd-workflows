@@ -194,13 +194,34 @@ jobs:
         run: |
           echo "📤 Pushing images to GHCR"
 
+          # Show what we're about to push
+          echo "🔍 Images to push:"
+          echo "  - ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.tag }}"
+          echo "  - ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.env_tag }}"
+
+          # Show local images
+          echo "🔍 Local images available:"
+          docker images | grep ${{ inputs.service_name }} || echo "No local images found"
+
           # Push specific version tag
-          docker push ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.tag }}
+          echo "📤 Pushing specific tag: ${{ steps.tag.outputs.tag }}"
+          if docker push ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.tag }}; then
+            echo "✅ Successfully pushed specific tag"
+          else
+            echo "❌ Failed to push specific tag"
+            exit 1
+          fi
 
           # Push environment tag
-          docker push ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.env_tag }}
+          echo "📤 Pushing environment tag: ${{ steps.tag.outputs.env_tag }}"
+          if docker push ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.env_tag }}; then
+            echo "✅ Successfully pushed environment tag"
+          else
+            echo "❌ Failed to push environment tag"
+            exit 1
+          fi
 
-          echo "✅ Successfully pushed:"
+          echo "✅ Successfully pushed all images:"
           echo "  - ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.tag }}"
           echo "  - ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.env_tag }}"
 
