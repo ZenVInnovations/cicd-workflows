@@ -22,7 +22,7 @@ on:
         type: boolean
         default: true
     secrets:
-      GHCR_PAT:
+      GITHUB_TOKEN:
         required: true
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull Docker Image
         run: |

@@ -35,7 +35,7 @@ on:
         description: 'Target environment'
         value: ${{ jobs.build-push.outputs.environment }}
     secrets:
-      GHCR_PAT:
+      GITHUB_TOKEN:
         required: true
       MANIFEST_UPDATE_TOKEN:
         required: true
@@ -59,7 +59,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Environment and Tag
         id: tag
