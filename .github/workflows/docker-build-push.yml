@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: '.'
+      fail_on_security:
+        description: 'Fail build on security vulnerabilities (HIGH,CRITICAL or empty to disable)'
+        required: false
+        type: string
+        default: ''
     outputs:
       image_tag:
         description: 'Generated image tag'
@@ -192,6 +197,32 @@ jobs:
                 ${{ inputs.build_context }}
             fi
           fi
+
+      - name: Security Scan Local Image
+        if: inputs.fail_on_security != ''
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ inputs.service_name }}:${{ steps.tag.outputs.tag }}'
+          format: 'table'
+          severity: ${{ inputs.fail_on_security }}
+          exit-code: '1'
+          output: 'trivy-scan-results.txt'
+
+      - name: Display Security Scan Results
+        if: always() && inputs.fail_on_security != ''
+        run: |
+          echo "🔒 Security Scan Results"
+          if [[ -f "trivy-scan-results.txt" ]]; then
+            cat trivy-scan-results.txt
+          else
+            echo "⚠️ No scan results found"
+          fi
+
+      - name: Security Gate Check
+        if: inputs.fail_on_security != ''
+        run: |
+          echo "🚪 Security gate enabled for: ${{ inputs.fail_on_security }}"
+          echo "✅ Image passed security scan - proceeding with push"
 
       - name: Tag Images for GHCR
         run: |
