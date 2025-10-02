@@ -24,8 +24,6 @@ on:
     secrets:
       CONTAINER_REGISTRY_TOKEN:
         required: false
-      GITHUB_TOKEN:
-        required: false
 
 jobs:
   security-scan:
@@ -44,7 +42,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN || secrets.CONTAINER_REGISTRY_TOKEN }}
+          password: ${{ secrets.CONTAINER_REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Pull Docker Image
         run: |
