@@ -69,7 +69,6 @@ jobs:
 
       - name: Run Trivy Vulnerability Scanner (SARIF)
         uses: aquasecurity/trivy-action@master
-        if: inputs.upload_sarif
         with:
           image-ref: 'ghcr.io/zenvinnovations/${{ inputs.image_name }}:${{ inputs.image_tag }}'
           format: 'sarif'
@@ -78,6 +77,7 @@ jobs:
       - name: Upload Trivy Scan Results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: inputs.upload_sarif && (success() || failure())
+        continue-on-error: true  # Don't fail if Advanced Security is not enabled
         with:
           sarif_file: 'trivy-results.sarif'
 
