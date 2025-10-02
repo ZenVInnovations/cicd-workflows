@@ -23,7 +23,9 @@ on:
         default: true
     secrets:
       CONTAINER_REGISTRY_TOKEN:
-        required: true
+        required: false
+      GITHUB_TOKEN:
+        required: false
 
 jobs:
   security-scan:
@@ -41,8 +43,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: srimanreddy99
-          password: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN || secrets.CONTAINER_REGISTRY_TOKEN }}
 
       - name: Pull Docker Image
         run: |

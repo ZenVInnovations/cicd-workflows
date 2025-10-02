@@ -36,9 +36,11 @@ on:
         value: ${{ jobs.build-push.outputs.environment }}
     secrets:
       CONTAINER_REGISTRY_TOKEN:
-        required: true
+        required: false
+      GITHUB_TOKEN:
+        required: false
       MANIFEST_UPDATE_TOKEN:
-        required: true
+        required: false
 
 jobs:
   build-push:
@@ -58,8 +60,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: srimanreddy99
-          password: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN || secrets.CONTAINER_REGISTRY_TOKEN }}
 
       - name: Generate Environment and Tag
         id: tag
@@ -75,17 +77,17 @@ jobs:
             "main")
               TAG="v${TIMESTAMP}"
               ENVIRONMENT="production"
-              ENV_TAG="production"
+              ENV_TAG="prod"
               ;;
             "staging")
-              TAG="staging-v${TIMESTAMP}-rc.${BUILD_NUMBER}"
+              TAG="stage-v${TIMESTAMP}-rc.${BUILD_NUMBER}"
               ENVIRONMENT="staging"
-              ENV_TAG="staging"
+              ENV_TAG="stage"
               ;;
             "develop")
               TAG="dev-${SHORT_SHA}"
               ENVIRONMENT="development"
-              ENV_TAG="development"
+              ENV_TAG="dev"
               ;;
             *)
               if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -119,6 +121,17 @@ jobs:
           npm install -g pnpm@latest
           pnpm --version
 
+      - name: Cache pnpm dependencies
+        if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pnpm-store
+            node_modules
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
       - name: Debug - List repository contents
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
         run: |
@@ -132,6 +145,8 @@ jobs:
 
       - name: Frontend Build (if using build script)
         if: inputs.service_name == 'flutto-frontend' && inputs.build_script != ''
+        env:
+          CI: true
         run: |
           echo "🔧 Running frontend build script: ${{ inputs.build_script }}"
 
@@ -151,6 +166,8 @@ jobs:
 
       - name: Build Docker Image
         id: build
+        env:
+          DOCKER_BUILDKIT: 1
         run: |
           echo "🐳 Building Docker image for ${{ inputs.service_name }}"
 
@@ -163,7 +180,7 @@ jobs:
               -t ${{ inputs.service_name }}:${{ steps.tag.outputs.tag }} \
               ${{ inputs.build_context }}
           else
-            # Frontend or generic build
+            # Frontend or generic build with BuildKit cache mounts
             if [[ -n "${{ inputs.docker_target }}" ]]; then
               docker build \
                 -f ${{ inputs.dockerfile_path }} \
@@ -226,9 +243,14 @@ jobs:
           echo "  - ghcr.io/zenvinnovations/${{ inputs.service_name }}:${{ steps.tag.outputs.env_tag }}"
 
       - name: Update Deployment Manifests
-        if: steps.tag.outputs.environment != 'pr' && steps.tag.outputs.environment != 'feature'
+        # DISABLED: ArgoCD Image Updater handles image updates via write-back-method: argocd
+        # This step was updating the wrong repository (flutto-deployment-manifests instead of flutto-gitops)
+        # Image Updater automatically detects new image digests and updates Application parameters
+        if: false
         run: |
-          echo "📝 Updating deployment manifests"
+          echo "⚠️ Manifest updates disabled - handled by ArgoCD Image Updater"
+          echo "ArgoCD Image Updater polls GHCR every 2 minutes and updates deployments automatically"
+          echo "See: /home/flutto-gitops/docs/CD-COMPLETE-GUIDE.md for details"
 
           # Clone manifests repository
           git clone https://${{ secrets.MANIFEST_UPDATE_TOKEN }}@github.com/zenvinnovations/flutto-deployment-manifests.git manifests
