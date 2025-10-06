@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: ''
+      build_args:
+        description: 'Docker build arguments (newline-separated, e.g. ARG1=value1\nARG2=value2)'
+        required: false
+        type: string
+        default: ''
     outputs:
       image_tag:
         description: 'Generated image tag'
@@ -178,6 +183,18 @@ jobs:
         run: |
           echo "🐳 Building Docker image for ${{ inputs.service_name }}"
 
+          # Parse build args if provided
+          BUILD_ARGS=""
+          if [[ -n "${{ inputs.build_args }}" ]]; then
+            echo "📋 Processing build arguments..."
+            while IFS= read -r line; do
+              if [[ -n "$line" && "$line" != \#* ]]; then
+                BUILD_ARGS="$BUILD_ARGS --build-arg $line"
+              fi
+            done <<< "${{ inputs.build_args }}"
+            echo "✅ Build args: $BUILD_ARGS"
+          fi
+
           # Build command based on service type
           if [[ "${{ inputs.service_name }}" == "project_management_flutto" ]]; then
             # Backend build with target slim
@@ -185,6 +202,7 @@ jobs:
               -f ${{ inputs.dockerfile_path }} \
               --target slim \
               --allow network.host \
+              $BUILD_ARGS \
               -t ${{ inputs.service_name }}:${{ steps.tag.outputs.tag }} \
               --load \
               ${{ inputs.build_context }}
@@ -195,6 +213,7 @@ jobs:
                 -f ${{ inputs.dockerfile_path }} \
                 --target ${{ inputs.docker_target }} \
                 --allow network.host \
+                $BUILD_ARGS \
                 -t ${{ inputs.service_name }}:${{ steps.tag.outputs.tag }} \
                 --load \
                 ${{ inputs.build_context }}
@@ -202,6 +221,7 @@ jobs:
               docker buildx build \
                 -f ${{ inputs.dockerfile_path }} \
                 --allow network.host \
+                $BUILD_ARGS \
                 -t ${{ inputs.service_name }}:${{ steps.tag.outputs.tag }} \
                 --load \
                 ${{ inputs.build_context }}
