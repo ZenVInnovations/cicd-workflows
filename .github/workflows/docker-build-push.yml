@@ -101,6 +101,11 @@ jobs:
               ENVIRONMENT="development"
               ENV_TAG="dev"
               ;;
+            "demo")
+              TAG="demo-${SHORT_SHA}"
+              ENVIRONMENT="demo"
+              ENV_TAG="demo"
+              ;;
             *)
               if [[ "${{ github.event_name }}" == "pull_request" ]]; then
                 TAG="pr-${{ github.event.pull_request.number }}-${SHORT_SHA}"
