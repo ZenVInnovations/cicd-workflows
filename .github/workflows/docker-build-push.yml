@@ -82,45 +82,61 @@ jobs:
           SHORT_SHA=${GITHUB_SHA::7}
           TIMESTAMP=$(date +%Y%m%d.%H%M%S)
           BUILD_NUMBER=${{ github.run_number }}
+          PR_NUMBER=${{ github.event.pull_request.number }}
 
           echo "Branch: $BRANCH_NAME"
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${GITHUB_REF}"
 
-          case "$BRANCH_NAME" in
-            "main")
-              TAG="v${TIMESTAMP}"
-              ENVIRONMENT="production"
-              ENV_TAG="prod"
-              ;;
-            "staging")
-              TAG="stage-v${TIMESTAMP}-rc.${BUILD_NUMBER}"
-              ENVIRONMENT="staging"
-              ENV_TAG="stage"
-              ;;
-            "develop")
-              TAG="dev-${SHORT_SHA}"
-              ENVIRONMENT="development"
-              ENV_TAG="dev"
-              ;;
-            "demo")
-              TAG="demo-${SHORT_SHA}"
-              ENVIRONMENT="demo"
-              ENV_TAG="demo"
-              ;;
-            *)
-              if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-                TAG="pr-${{ github.event.pull_request.number }}-${SHORT_SHA}"
-                ENVIRONMENT="pr"
-                ENV_TAG="pr"
-              else
-                TAG="feature-${BRANCH_NAME//\//-}-${SHORT_SHA}"
-                ENVIRONMENT="feature"
-                ENV_TAG="feature"
-              fi
-              ;;
-          esac
+          # GitHub Flow branching strategy
+          # - Pull Request → dev environment (for testing)
+          # - Push to main → staging environment (pre-production)
+          # - Tag v*.*.* → production environment (releases)
 
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # Pull Request - deploy to dev for preview and testing
+            TAG="pr-${PR_NUMBER}-${SHORT_SHA}"
+            ENVIRONMENT="development"
+            ENV_TAG="dev"
+            echo "📝 Pull Request #${PR_NUMBER} → dev environment"
+
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Tag release (v1.0.0, v1.1.0, etc.) - production deployment
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            TAG="${TAG_NAME}"
+            ENVIRONMENT="production"
+            ENV_TAG="prod"
+            echo "🏷️  Release tag ${TAG_NAME} → production environment"
+
+          elif [[ "$BRANCH_NAME" == "main" ]] && [[ "${{ github.event_name }}" == "push" ]]; then
+            # Push to main branch - staging deployment
+            TAG="main-${SHORT_SHA}"
+            ENVIRONMENT="staging"
+            ENV_TAG="stage"
+            echo "🚀 Push to main → staging environment"
+
+          elif [[ "$BRANCH_NAME" == "demo" ]]; then
+            # Demo branch - special demo environment
+            TAG="demo-${SHORT_SHA}"
+            ENVIRONMENT="demo"
+            ENV_TAG="demo"
+            echo "🎪 Demo branch → demo environment"
+
+          else
+            # Feature branch (no PR yet) - deploy to dev for testing
+            TAG="feature-${BRANCH_NAME//\//-}-${SHORT_SHA}"
+            ENVIRONMENT="development"
+            ENV_TAG="dev"
+            echo "🌿 Feature branch → dev environment"
+          fi
+
+          echo ""
+          echo "=== Build Configuration ==="
           echo "Generated tag: $TAG"
           echo "Environment: $ENVIRONMENT"
+          echo "Environment tag: $ENV_TAG"
+          echo "=========================="
+
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
           echo "env_tag=$ENV_TAG" >> $GITHUB_OUTPUT
