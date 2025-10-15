@@ -52,7 +52,9 @@ on:
 
 jobs:
   build-push:
-    runs-on: [self-hosted, linux, x64, zenvinnovations]
+    # Use GitHub-hosted for reliability and speed (fast SSD, clean disk every build)
+    # Free tier: 2000 minutes/month (plenty for startup with ~50 PRs/month)
+    runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
       environment: ${{ steps.tag.outputs.environment }}
