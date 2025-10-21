@@ -250,12 +250,19 @@ jobs:
             echo "No blocking vulnerabilities found - deployment can proceed"
           fi
 
-      - name: Upload Scan Report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: security-scan-report-${{ inputs.image_tag }}
-          path: |
-            trivy-report.txt
-            trivy-results.sarif
-          retention-days: 30
+      # Artifact upload disabled to avoid hitting storage limits
+      # Scan results are still available in:
+      # - PR comments (for pull requests)
+      # - Workflow step summary
+      # - GitHub Security tab (SARIF upload)
+      # - Workflow logs
+      #
+      # - name: Upload Scan Report
+      #   uses: actions/upload-artifact@v4
+      #   if: always()
+      #   with:
+      #     name: security-scan-report-${{ inputs.image_tag }}
+      #     path: |
+      #       trivy-report.txt
+      #       trivy-results.sarif
+      #     retention-days: 30
